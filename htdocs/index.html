@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Document</title>
+</head>
+<body>
+<video id="myVideo" width="200"></video>
+<button id="button">接続</button>
+<video id="yourVideo" width="200"></video>
+
+	<script src="https://cdn.socket.io/socket.io-1.3.7.js"></script>
+	<script src="https://code.jquery.com/jquery-1.11.3.min.js"></script>
+	<script>
+var localStream;
+//ベンダープリフィックスの有無を吸収
+navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+//MediaStreamの取得
+navigator.getUserMedia({
+	video: true,
+	audio: true
+},
+function(stream) {
+	//MediaStreamの設定
+	var myVideo = document.getElementById("myVideo")
+	myVideo.src = URL.createObjectURL(stream);
+	myVideo.volume = 0;
+	myVideo.play();
+	localStream = stream;
+},
+function(error) {
+	console.log("error",error);
+});
+
+
+//ベンダープリフィックスの有無を吸収
+var RTCPeerConnection = RTCPeerConnection || webkitRTCPeerConnection || mozRTCPeerConnection;
+//RTCコネクションの作成
+var peer = new RTCPeerConnection({ "iceServers": [{ "url": "stun:stun.l.google.com:19302" }] });
+
+//socket.ioの開始
+var socket = io();
+//ICEの送信
+peer.onicecandidate = function (evt) {
+	if ( evt.candidate ) {
+		socket.emit('sendCdi',{
+			"candidate": evt.candidate
+		});
+	}
+}
+//ICEの受信
+socket.on('reciveCdi',function(data){
+	var ice = new RTCIceCandidate(data.candidate);
+	peer.addIceCandidate(ice);
+});
+
+//ビデオ情報をセット
+peer.addEventListener("addstream",function(e){
+	var yourVideo = document.getElementById("yourVideo");
+	yourVideo.src = URL.createObjectURL(e.stream);
+	yourVideo.play();
+});
+
+
+//SDPを作成して送信
+$("#button").click(function(){
+	if(localStream){
+		peer.addStream(localStream);
+		peer.createOffer(function(sdp) {
+			peer.setLocalDescription(sdp, function() {
+				socket.emit('sendOffer',{
+					"sdp":sdp
+				});
+			});
+		});
+	}
+});
+
+//SDPを受け取ったらSDPを作成して返信
+socket.on('reciveOffer', function(info) {
+	if(localStream){
+		peer.addStream(localStream);
+		var sdp = new RTCSessionDescription(info.sdp);
+		peer.setRemoteDescription(sdp, function() {
+			peer.createAnswer(function(sdp) {
+				peer.setLocalDescription(sdp, function() {
+					socket.emit('sendAnswer',{
+						"sdp": sdp
+					});
+				});
+			});
+		});
+	}
+});
+
+//返信されたSDPをセット
+socket.on('reciveAnswer', function(info) {
+	console.log('reciveAnswer');
+	//アンサーをセット
+	var sdp = new RTCSessionDescription(info.sdp);
+	peer.setRemoteDescription(sdp);
+});
+
+	</script>
+</body>
+</html>
